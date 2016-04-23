@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Configuration;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -23,6 +24,7 @@ namespace Crawly
 
         public CrawlerEngine()
         {
+            ServicePointManager.DefaultConnectionLimit = MaxConcurrency+100;
             _client.Timeout = TimeSpan.FromSeconds(5);
         }
 
