@@ -13,26 +13,30 @@ namespace Crawly
         private readonly Regex _linkRegex = new Regex("((?:href=\"(?<protocol>/|http://|https://))(?<link>.+?)[\"])",
             RegexOptions.Compiled & RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(10));
 
-        private readonly int MaxConcurrency = 10;
+        private readonly int _maxConcurrency;
+
+        public CrawlerEngine(int concurrency = 10)
+        {
+            _maxConcurrency = concurrency;
+        }
 
         public async Task<int> Crawl(string startUrl)
         {
-            List<string> newLinks;
-            var Urls = new Stack<string>();
+            var urls = new Stack<string>();
             var tasks = new List<Task<List<string>>>();
-            Urls.Push(startUrl);
+            urls.Push(startUrl);
 
-            while (Urls.Count > 0)
+            while (urls.Count > 0)
             {
-                while (tasks.Count < MaxConcurrency && Urls.Count > 0)
+                while (tasks.Count < _maxConcurrency && urls.Count > 0)
                 {
-                    tasks.Add(CrawlAndProcess(Urls.Pop()));
+                    tasks.Add(CrawlAndProcess(urls.Pop()));
                 }
                 var completed = await Task.WhenAny(tasks.ToArray());
                 tasks.Remove(completed);
                 foreach (var link in completed.Result)
                 {
-                    Urls.Push(link);
+                    urls.Push(link);
                 }
             }
            
@@ -55,21 +59,21 @@ namespace Crawly
             return returnLinks;
         }
 
-        private void PrintCrawlMessage(string url)
+        private static void PrintCrawlMessage(string url)
         {
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine($"Crawling new {url}");
             Console.ResetColor();
         }
 
-        private void PrintFoundMessage(string url)
+        private static void PrintFoundMessage(string url)
         {
             Console.ForegroundColor = ConsoleColor.DarkCyan;
             Console.WriteLine($"Found new {url}");
             Console.ResetColor();
         }
 
-        private void PrintErrorMessage(Exception exception, string url)
+        private static void PrintErrorMessage(Exception exception, string url)
         {
             Console.ForegroundColor = ConsoleColor.Red;
             Console.WriteLine($"Error on url {url} \n {exception}");
