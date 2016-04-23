@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Configuration;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.RegularExpressions;
@@ -20,6 +21,7 @@ namespace Crawly
             new ConcurrentDictionary<string, string[]>();
 
         private int? _maxConcurrency;
+        private const string outDir = ".\\crawlResults\\";
 
         private int MaxConcurrency
         {
@@ -30,7 +32,7 @@ namespace Crawly
                     int concurrency;
                     _maxConcurrency = !int.TryParse(ConfigurationManager.AppSettings["MaxConcurrency"],
                         out concurrency)
-                        ? 10
+                        ? 10000
                         : concurrency;
                 }
 
@@ -43,7 +45,7 @@ namespace Crawly
             var urls = new Stack<Uri>();
             var tasks = new List<Task<List<Uri>>>();
             urls.Push(new Uri(startUrl));
-
+           
             while (urls.Count > 0)
             {
                 while (tasks.Count < MaxConcurrency && urls.Count > 0)
@@ -68,12 +70,15 @@ namespace Crawly
         public async Task<string[]> RobotRestrictions(Uri url)
         {
             var client = new HttpClient();
-            var response = await client.GetStringAsync(url.Scheme + Uri.SchemeDelimiter + url.Host + "/robots.txt");
+            var response =
+                await
+                    client.GetStringAsync(url.Scheme + Uri.SchemeDelimiter + url.Host + "/robots.txt")
+                        .ConfigureAwait(false);
             return (from line in response.Split('\n')
                 where line.StartsWith("Disallow:")
                 let disallowed = line.Substring("Disallow:".Length).Trim()
                 where !string.IsNullOrWhiteSpace(disallowed)
-                select disallowed).ToArray();
+                select PrintDisallowedMessage(disallowed, url)).ToArray();
         }
 
         public async Task<bool> IsRobotRestricted(Uri url)
@@ -121,6 +126,14 @@ namespace Crawly
             Console.ForegroundColor = ConsoleColor.DarkCyan;
             Console.WriteLine($"Found new {url}");
             Console.ResetColor();
+        }
+
+        private static string PrintDisallowedMessage(string disallowed, Uri url)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkMagenta;
+            Console.WriteLine($"{url.Host} Disallowed {disallowed}");
+            Console.ResetColor();
+            return disallowed;
         }
 
         private static void PrintErrorMessage(Exception exception, string url)
