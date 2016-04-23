@@ -12,7 +12,7 @@ namespace Crawly
     public class CrawlerEngine
     {
         private readonly HashSet<string> _crawledUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
+        private readonly HttpClient _client = new HttpClient();
         private readonly Regex _linkRegex = new Regex("((?:href=\"(?<protocol>/|http://|https://))(?<link>.+?)[\"])",
             RegexOptions.Compiled & RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(10));
 
@@ -20,6 +20,11 @@ namespace Crawly
             new ConcurrentDictionary<string, string[]>();
 
         private int? _maxConcurrency;
+
+        public CrawlerEngine()
+        {
+            _client.Timeout = TimeSpan.FromSeconds(5);
+        }
 
         private int MaxConcurrency
         {
@@ -63,10 +68,10 @@ namespace Crawly
 
         public async Task<string[]> RobotRestrictions(Uri url)
         {
-            var client = new HttpClient();
+           
             var response =
                 await
-                    client.GetStringAsync(url.Scheme + Uri.SchemeDelimiter + url.Host + "/robots.txt")
+                    _client.GetStringAsync(url.Scheme + Uri.SchemeDelimiter + url.Host + "/robots.txt")
                         .ConfigureAwait(false);
             return (from line in response.Split('\n')
                 where line.StartsWith("Disallow:")
@@ -145,14 +150,12 @@ namespace Crawly
         public async Task<List<Uri>> GetLinks(Uri url)
         {
             PrintCrawlMessage(url.OriginalString);
-            var client = new HttpClient();
-            client.Timeout = TimeSpan.FromSeconds(4);
             var returnLinks = new List<Uri>();
             string response;
 
             try
             {
-                response = await client.GetStringAsync(url).ConfigureAwait(false);
+                response = await _client.GetStringAsync(url).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
