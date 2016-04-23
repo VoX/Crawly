@@ -2,7 +2,6 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Configuration;
-using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.RegularExpressions;
@@ -21,7 +20,6 @@ namespace Crawly
             new ConcurrentDictionary<string, string[]>();
 
         private int? _maxConcurrency;
-        private const string outDir = ".\\crawlResults\\";
 
         private int MaxConcurrency
         {
@@ -32,7 +30,7 @@ namespace Crawly
                     int concurrency;
                     _maxConcurrency = !int.TryParse(ConfigurationManager.AppSettings["MaxConcurrency"],
                         out concurrency)
-                        ? 10000
+                        ? 1000
                         : concurrency;
                 }
 
@@ -45,8 +43,8 @@ namespace Crawly
             var urls = new Stack<Uri>();
             var tasks = new List<Task<List<Uri>>>();
             urls.Push(new Uri(startUrl));
-           
-            while (urls.Count > 0)
+
+            while (urls.Count > 0 || tasks.Count > 0)
             {
                 while (tasks.Count < MaxConcurrency && urls.Count > 0)
                 {
@@ -56,11 +54,7 @@ namespace Crawly
                 tasks.Remove(completed);
                 foreach (var link in completed.Result)
                 {
-                    var restricted = await IsRobotRestricted(link);
-                    if (!restricted)
-                    {
-                        urls.Push(link);
-                    }
+                    urls.Push(link);
                 }
             }
 
@@ -106,9 +100,13 @@ namespace Crawly
             {
                 if (!_crawledUrls.Contains(newLink.OriginalString))
                 {
-                    PrintFoundMessage(newLink.OriginalString);
-                    _crawledUrls.Add(newLink.OriginalString);
-                    returnLinks.Add(newLink);
+                    var restricted = await IsRobotRestricted(newLink);
+                    if (!restricted)
+                    {
+                        PrintFoundMessage(newLink.OriginalString);
+                        _crawledUrls.Add(newLink.OriginalString);
+                        returnLinks.Add(newLink);
+                    }
                 }
             }
             return returnLinks;
