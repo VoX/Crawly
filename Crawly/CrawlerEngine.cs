@@ -135,6 +135,7 @@ namespace Crawly
         {
             PrintCrawlMessage(url.OriginalString);
             var client = new HttpClient();
+            client.Timeout = TimeSpan.FromSeconds(4);
             var returnLinks = new List<Uri>();
             string response;
 
