@@ -15,7 +15,7 @@ namespace Crawly
         private readonly HashSet<string> _crawledUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HttpClient _client = new HttpClient();
         private readonly Regex _linkRegex = new Regex("((?:href=\"(?<protocol>/|http://|https://))(?<link>.+?)[\"])",
-            RegexOptions.Compiled & RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(10));
+            RegexOptions.Compiled & RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
 
         private readonly ConcurrentDictionary<string, string[]> _robotRestricted =
             new ConcurrentDictionary<string, string[]>();
@@ -153,11 +153,12 @@ namespace Crawly
         {
             PrintCrawlMessage(url.OriginalString);
             var returnLinks = new List<Uri>();
-            string response;
+            MatchCollection links;
 
             try
             {
-                response = await _client.GetStringAsync(url).ConfigureAwait(false);
+                var response = await _client.GetStringAsync(url).ConfigureAwait(false);
+                links = _linkRegex.Matches(response);
             }
             catch (Exception ex)
             {
@@ -165,7 +166,7 @@ namespace Crawly
                 return returnLinks;
             }
 
-            var links = _linkRegex.Matches(response);
+            
             foreach (Match link in links)
             {
                 var currLink = link.Groups["link"].Value;
