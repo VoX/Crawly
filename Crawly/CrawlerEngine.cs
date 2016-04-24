@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Configuration;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -12,56 +11,75 @@ namespace Crawly
 {
     public class CrawlerEngine
     {
-        private readonly HashSet<string> _crawledUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly HttpClient _client = new HttpClient();
+        private readonly HashSet<string> _crawledUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         private readonly Regex _linkRegex = new Regex("((?:href=\"(?<protocol>/|http://|https://))(?<link>.+?)[\"])",
             RegexOptions.Compiled & RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50));
+
+        private readonly ResultsLogger _logger;
 
         private readonly ConcurrentDictionary<string, string[]> _robotRestricted =
             new ConcurrentDictionary<string, string[]>();
 
         private int? _maxConcurrency;
+        private List<Task<List<Uri>>> _tasks;
+        private Stack<Uri> _urls;
 
-        public CrawlerEngine()
+        public CrawlerEngine(ResultsLogger logger = null, int maxConcurrency = 200)
         {
-            ServicePointManager.DefaultConnectionLimit = MaxConcurrency+100;
+            MaxConcurrency = maxConcurrency;
             _client.Timeout = TimeSpan.FromSeconds(5);
+            _logger = logger ?? new ResultsLogger(".\\crawl-" + Guid.NewGuid() + ".log");
+            MaxConcurrency = maxConcurrency;
         }
 
-        private int MaxConcurrency
+        public string StartUrl { get; set; }
+        public long Crawled => _crawledUrls.Count;
+        public long CurrentConcurrency => _tasks.Count;
+        public long Queued => _urls.Count;
+        public long RobotDomains => _robotRestricted.Count;
+
+        public int MaxConcurrency
         {
             get
             {
-                if (!_maxConcurrency.HasValue)
-                {
-                    int concurrency;
-                    _maxConcurrency = !int.TryParse(ConfigurationManager.AppSettings["MaxConcurrency"],
-                        out concurrency)
-                        ? 1000
-                        : concurrency;
-                }
-
-                return _maxConcurrency.Value;
+                return _maxConcurrency ?? 200;
+            }
+            set
+            {
+                ServicePointManager.DefaultConnectionLimit = value + 100;
+                _maxConcurrency = value;
             }
         }
 
-        public async Task<int> Crawl(string startUrl)
-        {
-            var urls = new Stack<Uri>();
-            var tasks = new List<Task<List<Uri>>>();
-            urls.Push(new Uri(startUrl));
+        public string LogFile => _logger.FilePath;
 
-            while (urls.Count > 0 || tasks.Count > 0)
+        public async Task<int> CrawlAsync(string startUrl)
+        {
+            _urls = new Stack<Uri>();
+            _tasks = new List<Task<List<Uri>>>();
+            _urls.Push(new Uri(startUrl));
+            StartUrl = startUrl;
+
+
+            while (_urls.Count > 0 || _tasks.Count > 0)
             {
-                while (tasks.Count < MaxConcurrency && urls.Count > 0)
+                while (_tasks.Count < MaxConcurrency && _urls.Count > 0)
                 {
-                    tasks.Add(CrawlAndProcess(urls.Pop()));
+                    _tasks.Add(CrawlAndProcessLink(_urls.Pop()));
                 }
-                var completed = await Task.WhenAny(tasks.ToArray());
-                tasks.Remove(completed);
-                foreach (var link in completed.Result)
+
+                Task t = await Task.WhenAny(Task.WhenAny(_tasks), Task.Delay(TimeSpan.FromMilliseconds(500)));
+
+                var completed = _tasks.Where(x => x.Status == TaskStatus.RanToCompletion).ToList();
+                foreach (var task in completed)
                 {
-                    urls.Push(link);
+                    _tasks.Remove(task);
+                    foreach (var link in task.Result)
+                    {
+                        _urls.Push(link);
+                    }
                 }
             }
 
@@ -70,7 +88,6 @@ namespace Crawly
 
         public async Task<string[]> RobotRestrictions(Uri url)
         {
-           
             var response =
                 await
                     _client.GetStringAsync(url.Scheme + Uri.SchemeDelimiter + url.Host + "/robots.txt")
@@ -79,7 +96,7 @@ namespace Crawly
                 where line.StartsWith("Disallow:")
                 let disallowed = line.Substring("Disallow:".Length).Trim()
                 where !string.IsNullOrWhiteSpace(disallowed)
-                select PrintDisallowedMessage(disallowed, url)).ToArray();
+                select LogFoundDisallowedPrefix(disallowed, url)).ToArray();
         }
 
         public async Task<bool> IsRobotRestricted(Uri url)
@@ -99,7 +116,7 @@ namespace Crawly
             return _robotRestricted[url.Host].Any(prefix => url.PathAndQuery.StartsWith(prefix));
         }
 
-        public async Task<List<Uri>> CrawlAndProcess(Uri url)
+        private async Task<List<Uri>> CrawlAndProcessLink(Uri url)
         {
             var newLinks = await GetLinks(url);
             var returnLinks = new List<Uri>();
@@ -110,7 +127,7 @@ namespace Crawly
                     var restricted = await IsRobotRestricted(newLink);
                     if (!restricted)
                     {
-                        PrintFoundMessage(newLink.OriginalString);
+                        LogFoundLink(newLink.OriginalString);
                         _crawledUrls.Add(newLink.OriginalString);
                         returnLinks.Add(newLink);
                     }
@@ -119,39 +136,31 @@ namespace Crawly
             return returnLinks;
         }
 
-        private static void PrintCrawlMessage(string url)
+        private void LogCrawlLink(string url)
         {
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"Crawling new {url}");
-            Console.ResetColor();
+            _logger.Log($"Crawling:{url}");
         }
 
-        private static void PrintFoundMessage(string url)
+        private void LogFoundLink(string url)
         {
-            Console.ForegroundColor = ConsoleColor.DarkCyan;
-            Console.WriteLine($"Found new {url}");
-            Console.ResetColor();
+            _logger.Log($"Found:{url}");
         }
 
-        private static string PrintDisallowedMessage(string disallowed, Uri url)
+        private string LogFoundDisallowedPrefix(string disallowed, Uri url)
         {
-            Console.ForegroundColor = ConsoleColor.DarkMagenta;
-            Console.WriteLine($"{url.Host} Disallowed {disallowed}");
-            Console.ResetColor();
+            _logger.Log($"Disallowed:{url.Host}  Prefix:{disallowed}");
             return disallowed;
         }
 
-        private static void PrintErrorMessage(Exception exception, string url)
+        private void LogCrawlError(Exception exception, string url)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Error on url {url} \n {exception}");
-            Console.ResetColor();
+            _logger.Log($"CrawlError:{url} Exception:{exception}");
         }
 
 
         public async Task<List<Uri>> GetLinks(Uri url)
         {
-            PrintCrawlMessage(url.OriginalString);
+            LogCrawlLink(url.OriginalString);
             var returnLinks = new List<Uri>();
             MatchCollection links;
 
@@ -162,11 +171,11 @@ namespace Crawly
             }
             catch (Exception ex)
             {
-                PrintErrorMessage(ex, url.OriginalString);
+                LogCrawlError(ex, url.OriginalString);
                 return returnLinks;
             }
 
-            
+
             foreach (Match link in links)
             {
                 var currLink = link.Groups["link"].Value;
