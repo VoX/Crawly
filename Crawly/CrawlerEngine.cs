@@ -5,6 +5,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Crawly
@@ -22,6 +23,9 @@ namespace Crawly
         private readonly ConcurrentDictionary<string, string[]> _robotRestricted =
             new ConcurrentDictionary<string, string[]>();
 
+
+        private long _errorCounter;
+        private long _crawledCounter;
         private int? _maxConcurrency;
         private List<Task<List<Uri>>> _tasks;
         private Stack<Uri> _urls;
@@ -29,14 +33,16 @@ namespace Crawly
         public CrawlerEngine(ResultsLogger logger = null, int maxConcurrency = 200)
         {
             MaxConcurrency = maxConcurrency;
-            _client.Timeout = TimeSpan.FromSeconds(5);
+            _client.Timeout = TimeSpan.FromSeconds(1);
             _logger = logger ?? new ResultsLogger(".\\crawl-" + Guid.NewGuid() + ".log");
             MaxConcurrency = maxConcurrency;
         }
 
         public string StartUrl { get; set; }
-        public long Crawled => _crawledUrls.Count;
+        public long Crawled => _crawledCounter;
         public long CurrentConcurrency => _tasks.Count;
+        public long Found => _crawledUrls.Count;
+        public long Errored => _errorCounter;
         public long Queued => _urls.Count;
         public long RobotDomains => _robotRestricted.Count;
 
@@ -138,6 +144,7 @@ namespace Crawly
 
         private void LogCrawlLink(string url)
         {
+            Interlocked.Increment(ref _crawledCounter);
             _logger.Log($"Crawling:{url}");
         }
 
@@ -154,6 +161,7 @@ namespace Crawly
 
         private void LogCrawlError(Exception exception, string url)
         {
+            Interlocked.Increment(ref _errorCounter);
             _logger.Log($"CrawlError:{url} Exception:{exception}");
         }
 
